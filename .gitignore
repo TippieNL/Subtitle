@@ -11,3 +11,6 @@ captures/
 *.aab
 *.keystore
 keystore.properties
+
+# Kotlin compiler session files (build artifacts)
+.kotlin/
