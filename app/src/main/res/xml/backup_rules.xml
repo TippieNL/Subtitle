@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- API keys are Keystore-wrapped and device-bound; never back them up. -->
+    <exclude domain="sharedpref" path="secure_keys.xml" />
+</full-backup-content>

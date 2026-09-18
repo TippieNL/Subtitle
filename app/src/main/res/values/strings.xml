@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Subtitle</string>
+    <string name="channel_processing_name">Transcription</string>
+    <string name="channel_processing_desc">Progress for subtitle generation and video export</string>
+</resources>

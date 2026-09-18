@@ -164,7 +164,7 @@ Everything this app needs is available natively:
 | Container parse / track enumeration | `MediaExtractor`, `MediaMetadataRetriever` |
 | Audio decode (AAC/Opus/Vorbis/MP3/FLAC/AC3¹) | `MediaCodec` |
 | Downmix to mono | media3 `ChannelMixingAudioProcessor` |
-| Resample to 16 kHz | media3 `SonicAudioProcessor.setOutputSampleRateHz(16000)` |
+| Resample to 16 kHz | own polyphase windowed-sinc `SincResampler` (see note) |
 | Encode AAC / mux `.m4a` | `MediaCodec` + `MediaMuxer` |
 | Burn-in subtitles | media3 `Transformer` + `TextOverlay` |
 | Playback with soft subs | media3 `ExoPlayer` + sideloaded `SubtitleConfiguration` |
@@ -483,29 +483,51 @@ attempts per chunk before marking `FAILED`.
 |---|---|---|
 | UI | Jetpack Compose + Material 3 (`material3`, adaptive) | Required by brief; M3 expressive components |
 | Navigation | `navigation-compose` with type-safe routes | Serializable route objects, no string parsing |
-| DI | Hilt | `HiltWorkerFactory` makes worker injection sane |
+| DI | **none — hand-rolled `AppContainer`** | See below |
 | Async | Coroutines + Flow | — |
 | Background | WorkManager (`work-runtime-ktx`) | Long-running worker + foreground + constraints |
 | Playback | media3 `exoplayer`, `ui-compose`, `exoplayer-*` | Side-loaded subtitle track for preview |
 | Transform | media3 `transformer`, `effect`, `common` | Burn-in + audio processors, no FFmpeg |
-| DB | Room + Paging 3 | Unbounded cue lists must page |
+| DB | Room | Unbounded cue lists; see the Paging note below |
 | Prefs | DataStore (Proto or Preferences) | — |
-| Secure store | `androidx.security:security-crypto` | Keystore-backed |
-| Network | Retrofit + OkHttp + `kotlinx-serialization` | Multipart upload, interceptor for auth |
+| Secure store | **Android Keystore directly** | `EncryptedSharedPreferences` is deprecated |
+| Network | OkHttp + `kotlinx-serialization` | One multipart endpoint doesn't justify Retrofit |
 | Images | Coil | Thumbnails |
 | Local ASR (v2) | whisper.cpp via NDK/CMake submodule | No Maven artifact exists |
 | Logging | Timber (debug only) | — |
 | Test | JUnit5/4, Turbine, MockK, Robolectric, `work-testing`, `room-testing`, Compose UI test | — |
 
 **Explicitly not used:** ffmpeg-kit (retired, §3), `android.speech.SpeechRecognizer`
-(wrong tool, §2), `AsyncTask`/`Loader`/`JobIntentService` (deprecated), Gson (reflection,
-prefer kotlinx).
+(wrong tool, §2), `AsyncTask`/`Loader`/`JobIntentService` (deprecated), Gson.
 
-**Version note:** exact versions are pinned in the Gradle version catalog in Phase 2 and
-must be verified against Maven Central at that time — media3's `Transformer`/`effect`
-APIs are `@UnstableApi` and have moved between minors (notably `OverlaySettings` becoming
-an interface with `StaticOverlaySettings`). Phase 2 pins one media3 version across all
-its artifacts and opts in via `@OptIn(UnstableApi::class)` at the use sites.
+**Three deliberate simplifications made during implementation**, each reversible:
+
+- **No Hilt.** The graph is a dozen singletons built in `AppContainer`, and workers get it
+  through a 10-line `WorkerFactory`. Hilt would add an annotation processor and a
+  Kotlin/KSP/AGP version coupling — the exact coupling that already forced two build
+  changes above — for no benefit at this size. Introduce it when the graph outgrows one
+  screenful.
+- **No Retrofit.** One multipart endpoint, called from one place.
+- **No Paging 3 yet.** Cues are text: a 2-hour film yields ~1,500 rows, a few hundred KB,
+  and `LazyColumn` keys them so only visible rows compose. Paging earns its place past
+  roughly 20,000 cues (a 20-hour recording); the DAO is already `Flow`-based, so swapping
+  in `PagingSource` is a one-file change.
+
+**Version note (corrected during Phase 2 — these are the versions that actually build):**
+AGP **9.4.1**, Gradle **9.7.1**, Kotlin **2.4.20**, KSP **2.3.12**, media3 **1.11.1**,
+Room **2.8.5**, WorkManager **2.11.2**, Compose BOM **2026.09.00**, OkHttp **5.5.0**.
+
+Three things had to change from the Phase 1 plan once the build ran:
+
+1. **compileSdk/targetSdk 37, not 36.** Current AndroidX (`compose-ui`, `okhttp-android`,
+   `lifecycle`) refuses to be consumed by a project compiling against 36.
+2. **AGP 9 ships built-in Kotlin support**, which is incompatible with KSP. Room needs
+   KSP, so the project sets `android.builtInKotlin=false` and `android.newDsl=false` and
+   applies `org.jetbrains.kotlin.android` explicitly. Revisit when KSP supports AGP's
+   built-in Kotlin.
+3. `OverlaySettings` lives in `androidx.media3.common`, not `androidx.media3.effect`, and
+   `OverlayEffect` takes a plain `List`. Opt-in is project-wide via
+   `-opt-in=androidx.media3.common.util.UnstableApi`.
 
 ---
 
@@ -544,10 +566,10 @@ its artifacts and opts in via `@OptIn(UnstableApi::class)` at the use sites.
 | Phase | Contents | State |
 |---|---|---|
 | 1 | This document | **done** |
-| 2 | Gradle version catalog, manifest, DI skeleton, navigation, theme, Room schema | next |
-| 3 | Picker, metadata, `AudioPipeline`, chunker, `TranscriptionProvider` + OpenAI impl, `TimelineMerger`, `CueSegmenter`, `TranscriptionWorker`, progress/cancel/resume | |
-| 4 | Editor (list + timeline + player), split/merge/retime/search, SRT/VTT read+write, styling, burn-in via Transformer | |
-| 5 | Unit tests (merger, chunker, formats), instrumented Room/Worker tests, long-video soak, memory profiling, device matrix | |
+| 2 | Gradle version catalog, manifest, DI, navigation, theme, Room schema | **done** |
+| 3 | Picker, metadata, `AudioDecoder`, chunker, `TranscriptionProvider` + OpenAI impl, `TimelineMerger`, `CueSegmenter`, `TranscriptionWorker`, progress/cancel/resume | **done** |
+| 4 | Editor (list + player), split/merge/retime/search, SRT/VTT read+write, styling, burn-in via Transformer | **done** |
+| 5 | Unit tests (50, passing). Instrumented Room/Worker tests, long-video soak, memory profiling, device matrix still to do | partial |
 | 6 | `LocalWhisperProvider` (whisper.cpp), model manager | |
 | 7 | Translation, `BackendTranscriptionProvider` | |
 
