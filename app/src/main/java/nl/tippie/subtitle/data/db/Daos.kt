@@ -39,6 +39,14 @@ interface ProjectDao {
 
     @Query("UPDATE projects SET detectedLanguage = :lang WHERE id = :id AND detectedLanguage IS NULL")
     suspend fun setDetectedLanguage(id: Long, lang: String?)
+
+    @Query(
+        """UPDATE projects SET translationLanguage = :language, translatedCues = :translated,
+           updatedAt = :now WHERE id = :id"""
+    )
+    suspend fun setTranslationProgress(
+        id: Long, language: String?, translated: Int, now: Long = System.currentTimeMillis()
+    )
 }
 
 @Dao
@@ -100,4 +108,23 @@ interface CueDao {
 
     @Query("SELECT COUNT(*) FROM cues WHERE projectId = :projectId")
     suspend fun count(projectId: Long): Int
+
+    // ---- translation -------------------------------------------------------
+
+    /** Cues still needing translation, oldest first. Resume simply re-reads this. */
+    @Query(
+        """SELECT * FROM cues WHERE projectId = :projectId
+           AND (translatedText IS NULL OR translatedText = '')
+           ORDER BY startMs, id"""
+    )
+    suspend fun untranslated(projectId: Long): List<CueEntity>
+
+    @Query("SELECT COUNT(*) FROM cues WHERE projectId = :projectId AND translatedText IS NOT NULL AND translatedText != ''")
+    suspend fun translatedCount(projectId: Long): Int
+
+    @Query("UPDATE cues SET translatedText = :text WHERE id = :id")
+    suspend fun setTranslation(id: Long, text: String?)
+
+    @Query("UPDATE cues SET translatedText = NULL WHERE projectId = :projectId")
+    suspend fun clearTranslations(projectId: Long)
 }

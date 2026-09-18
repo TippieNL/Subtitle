@@ -63,6 +63,9 @@ fun SettingsScreen(
     onSetParallel: (Int) -> Unit,
     onSetRequireUnmetered: (Boolean) -> Unit,
     onSetStyle: (SubtitleStyle) -> Unit,
+    onSetTranslationTarget: (String) -> Unit,
+    onSetTranslationModel: (String) -> Unit,
+    onSetTranslationBatchSize: (Int) -> Unit,
     onClearCache: () -> Unit,
 ) {
     var keyInput by remember { mutableStateOf("") }
@@ -199,6 +202,51 @@ fun SettingsScreen(
                 }
                 Switch(checked = settings.requireUnmetered, onCheckedChange = onSetRequireUnmetered)
             }
+
+            Spacer(Modifier.height(16.dp))
+            Section("Translation")
+            Text(
+                "Used when you translate finished subtitles from the editor. Translating the " +
+                    "speech directly to English during transcription is a separate option on " +
+                    "the import screen — it costs nothing extra and keeps timings tighter.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            LabeledDropdown(
+                label = "Default target language",
+                options = Languages.supported.filterNot { it.first == Languages.AUTO },
+                selectedKey = settings.translationTarget,
+                onSelect = onSetTranslationTarget,
+            )
+            Spacer(Modifier.height(10.dp))
+            var modelInput by remember(settings.translationModel) {
+                mutableStateOf(settings.translationModel)
+            }
+            OutlinedTextField(
+                value = modelInput,
+                onValueChange = { modelInput = it },
+                label = { Text("Translation model") },
+                singleLine = true,
+                supportingText = {
+                    Text("Change this if the model is retired or unavailable on your account.")
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(
+                onClick = { onSetTranslationModel(modelInput) },
+                enabled = modelInput.isNotBlank() && modelInput != settings.translationModel,
+            ) { Text("Save model") }
+            SliderRow(
+                label = "Lines per request",
+                value = settings.translationBatchSize.toFloat(),
+                range = 5f..40f,
+                steps = 6,
+                display = "${settings.translationBatchSize}",
+                help = "More lines per request is cheaper and gives the model more context, " +
+                    "but a miscount costs more to retry.",
+                onChange = { onSetTranslationBatchSize(it.toInt()) },
+            )
 
             Spacer(Modifier.height(16.dp))
             Section("Subtitle appearance")

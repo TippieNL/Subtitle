@@ -46,6 +46,7 @@ import nl.tippie.subtitle.domain.model.ProjectStatus
 import nl.tippie.subtitle.domain.model.SubtitleProject
 import nl.tippie.subtitle.subtitle.format.TimeFormat
 import nl.tippie.subtitle.util.Formatting
+import nl.tippie.subtitle.util.Languages
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -199,7 +200,12 @@ private fun StatusRow(project: SubtitleProject) {
             "Transcribing · ${project.completedChunks}/${project.totalChunks} chunks" to true
         ProjectStatus.PAUSED ->
             "Paused · ${project.completedChunks}/${project.totalChunks} chunks done" to true
-        ProjectStatus.COMPLETED -> "Ready" to false
+        ProjectStatus.TRANSLATING ->
+            "Translating · ${project.translatedCues} subtitles" to true
+        ProjectStatus.COMPLETED ->
+            (if (project.translationLanguage != null)
+                "Ready · ${Languages.label(project.translationLanguage)} translation"
+            else "Ready") to false
         ProjectStatus.FAILED -> "Failed" to false
         ProjectStatus.CANCELLED -> "Cancelled" to false
     }

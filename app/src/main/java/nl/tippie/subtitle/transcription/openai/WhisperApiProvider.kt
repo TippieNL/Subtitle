@@ -4,6 +4,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import nl.tippie.subtitle.domain.model.ProcessingError
 import nl.tippie.subtitle.domain.model.ProviderId
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 import nl.tippie.subtitle.media.sink.ChunkEncoding
 import nl.tippie.subtitle.transcription.AudioRequirements
 import nl.tippie.subtitle.transcription.ChunkRequest
@@ -36,6 +37,15 @@ import kotlin.coroutines.resumeWithException
  * Service limit: 25 MB per request. Our default 5-minute chunk is ~9.6 MB as WAV and
  * ~1.2 MB as AAC, so the limit never binds — but it is enforced in [audioRequirements]
  * so the chunker cannot accidentally exceed it.
+ *
+ * Two endpoints, same model and same price:
+ *  - `/audio/transcriptions` returns text in the spoken language.
+ *  - `/audio/translations` returns English, translated from any supported source language.
+ *
+ * The translation endpoint is English-only and takes no `language` parameter (the source
+ * is always auto-detected, the target is always English). Because it works from the audio,
+ * its timestamps need no re-alignment — which is why it beats transcribing and then
+ * translating the text whenever English is the goal and nothing has been transcribed yet.
  */
 class WhisperApiProvider(
     private val apiKeyProvider: () -> String?,
@@ -50,6 +60,7 @@ class WhisperApiProvider(
         supportsLanguageDetection = true,
         supportsWordTimestamps = true,
         supportsContextPrompt = true,
+        supportsTranslationToEnglish = true,
         requiresNetwork = true,
         sendsAudioOffDevice = true,
         privacyNote = "Audio (not video) is uploaded to OpenAI for transcription. " +
@@ -118,19 +129,30 @@ class WhisperApiProvider(
             .addFormDataPart("model", MODEL)
             .addFormDataPart("response_format", "verbose_json")
             .apply {
-                addFormDataPart("timestamp_granularities[]", "segment")
-                if (request.wantWordTimestamps) {
-                    addFormDataPart("timestamp_granularities[]", "word")
+                val translating = request.task == TranscriptionTask.TRANSLATE_TO_ENGLISH
+                if (!translating) {
+                    // timestamp_granularities and language are transcription-only; the
+                    // translation endpoint rejects them. verbose_json still returns
+                    // per-segment timings for both.
+                    addFormDataPart("timestamp_granularities[]", "segment")
+                    if (request.wantWordTimestamps) {
+                        addFormDataPart("timestamp_granularities[]", "word")
+                    }
+                    request.language?.takeIf { it.isNotBlank() && it != AUTO }
+                        ?.let { addFormDataPart("language", it) }
                 }
-                request.language?.takeIf { it.isNotBlank() && it != AUTO }
-                    ?.let { addFormDataPart("language", it) }
                 request.contextPrompt?.takeIf { it.isNotBlank() }
                     ?.let { addFormDataPart("prompt", it.take(MAX_PROMPT_CHARS)) }
             }
             .build()
 
+        val endpoint = when (request.task) {
+            TranscriptionTask.TRANSCRIBE -> "$baseUrl/audio/transcriptions"
+            TranscriptionTask.TRANSLATE_TO_ENGLISH -> "$baseUrl/audio/translations"
+        }
+
         val httpRequest = Request.Builder()
-            .url("$baseUrl/audio/transcriptions")
+            .url(endpoint)
             .header("Authorization", "Bearer $key")
             .post(body)
             .build()

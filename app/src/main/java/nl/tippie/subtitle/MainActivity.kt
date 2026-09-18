@@ -116,6 +116,7 @@ private fun SubtitleApp() {
                 onBack = { navController.popBackStack() },
                 onSelectTrack = viewModel::selectTrack,
                 onSelectLanguage = viewModel::selectLanguage,
+                onSelectTask = viewModel::selectTask,
                 onOpenSettings = { navController.navigate(SettingsRoute) },
                 onStart = {
                     scope.launch {
@@ -171,6 +172,10 @@ private fun SubtitleApp() {
                 onPositionChange = viewModel::onPosition,
                 onSeek = viewModel::seek,
                 onExport = { navController.navigate(ExportRoute(projectId)) },
+                onSelectTrack = { viewModel.selectTrack(it) },
+                onOpenTranslateDialog = viewModel::openTranslateDialog,
+                onTranslate = { viewModel.translate(it) },
+                onCancelTranslation = viewModel::cancelTranslation,
             )
         }
 
@@ -191,6 +196,7 @@ private fun SubtitleApp() {
                 state = state,
                 onBack = { navController.popBackStack() },
                 onSelectFormat = viewModel::setFormat,
+                onSelectTrack = viewModel::setTrack,
                 onPickDestination = { subtitlePicker.launch(viewModel.suggestedName()) },
                 onBurnIn = { videoPicker.launch("${state.projectName.substringBeforeLast('.')}-subtitled.mp4") },
                 onOpenStyle = { navController.navigate(SettingsRoute) },
@@ -214,6 +220,9 @@ private fun SubtitleApp() {
                 onSetParallel = viewModel::setParallel,
                 onSetRequireUnmetered = viewModel::setRequireUnmetered,
                 onSetStyle = viewModel::setStyle,
+                onSetTranslationTarget = viewModel::setTranslationTarget,
+                onSetTranslationModel = viewModel::setTranslationModel,
+                onSetTranslationBatchSize = viewModel::setTranslationBatchSize,
                 onClearCache = { viewModel.clearCache() },
             )
         }

@@ -8,6 +8,7 @@ enum class Stage(val label: String) {
     EXTRACTING("Extracting audio"),
     TRANSCRIBING("Transcribing"),
     FINALISING("Building subtitles"),
+    TRANSLATING("Translating"),
     DONE("Done"),
     RENDERING("Rendering video"),
 }
@@ -25,7 +26,8 @@ data class WorkProgress(
     val fraction: Float
         get() = when {
             stage == Stage.DONE -> 1f
-            chunkCount > 0 && stage == Stage.TRANSCRIBING -> chunkIndex.toFloat() / chunkCount
+            chunkCount > 0 && (stage == Stage.TRANSCRIBING || stage == Stage.TRANSLATING) ->
+                chunkIndex.toFloat() / chunkCount
             totalMs > 0 -> (processedMs.toFloat() / totalMs).coerceIn(0f, 1f)
             else -> 0f
         }

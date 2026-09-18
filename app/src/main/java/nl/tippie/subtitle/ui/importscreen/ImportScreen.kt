@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import nl.tippie.subtitle.domain.model.AudioTrackInfo
 import nl.tippie.subtitle.domain.model.MediaInfo
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 import nl.tippie.subtitle.subtitle.format.TimeFormat
 import nl.tippie.subtitle.ui.components.LabeledDropdown
 import nl.tippie.subtitle.ui.components.PrivacyBanner
@@ -54,6 +55,8 @@ data class ImportUiState(
     val providerReady: Boolean = false,
     val providerBlockedReason: String? = null,
     val estimatedUploadBytes: Long = 0,
+    val task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
+    val supportsAudioTranslation: Boolean = false,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,6 +66,7 @@ fun ImportScreen(
     onBack: () -> Unit,
     onSelectTrack: (Int) -> Unit,
     onSelectLanguage: (String) -> Unit,
+    onSelectTask: (TranscriptionTask) -> Unit,
     onOpenSettings: () -> Unit,
     onStart: () -> Unit,
 ) {
@@ -134,12 +138,41 @@ fun ImportScreen(
 
                 SectionTitle("Transcription")
                 Spacer(Modifier.height(8.dp))
+
+                if (state.supportsAudioTranslation) {
+                    Column(Modifier.selectableGroup()) {
+                        TaskRow(
+                            title = "Subtitles in the spoken language",
+                            subtitle = "Transcribes what is said, as it is said.",
+                            selected = state.task == TranscriptionTask.TRANSCRIBE,
+                            onSelect = { onSelectTask(TranscriptionTask.TRANSCRIBE) },
+                        )
+                        TaskRow(
+                            title = "English subtitles",
+                            subtitle = "Whisper translates the speech straight to English. " +
+                                "Same price as transcribing, and the timings come from the audio.",
+                            selected = state.task == TranscriptionTask.TRANSLATE_TO_ENGLISH,
+                            onSelect = { onSelectTask(TranscriptionTask.TRANSLATE_TO_ENGLISH) },
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+
                 LabeledDropdown(
-                    label = "Spoken language",
+                    label = if (state.task == TranscriptionTask.TRANSLATE_TO_ENGLISH)
+                        "Spoken language (source)" else "Spoken language",
                     options = Languages.supported,
                     selectedKey = state.language,
                     onSelect = onSelectLanguage,
                 )
+                if (state.task == TranscriptionTask.TRANSLATE_TO_ENGLISH) {
+                    Text(
+                        "The output is always English. To get a different language, transcribe " +
+                            "first and then translate the subtitles from the editor.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 Row(
                     Modifier.fillMaxWidth(),
@@ -244,6 +277,24 @@ private fun InfoRow(label: String, value: String) {
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
     HorizontalDivider(Modifier.padding(top = 4.dp))
+}
+
+@Composable
+private fun TaskRow(title: String, subtitle: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Column(Modifier.padding(top = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable

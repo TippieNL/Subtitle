@@ -71,6 +71,24 @@ sealed class ProcessingError(val userMessage: String, val cause: Throwable? = nu
         "Couldn't write to the selected location. Pick a different folder and try again.", cause
     )
 
+    class TranslationMiscount(expected: Int, got: Int) : ProcessingError(
+        "The translator returned $got lines for $expected subtitles. " +
+            "Retrying with smaller batches."
+    )
+
+    class TranslationModelUnavailable(model: String) : ProcessingError(
+        "The translation model \"$model\" isn't available on your account. " +
+            "Pick a different one in Settings."
+    )
+
+    class NothingToTranslate : ProcessingError(
+        "There are no subtitles to translate yet. Run the transcription first."
+    )
+
+    class AlreadyInTargetLanguage(language: String) : ProcessingError(
+        "These subtitles are already in $language."
+    )
+
     class Unexpected(stage: String, cause: Throwable?) : ProcessingError(
         "Failed during $stage: ${cause?.message ?: cause?.javaClass?.simpleName ?: "no detail available"}",
         cause

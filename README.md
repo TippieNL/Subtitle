@@ -16,22 +16,25 @@ MVP, end to end: pick a video → transcribe → edit → export. 50 unit tests 
 |---|---|
 | SAF video picker with persisted permission | On-device Whisper (`LocalWhisperProvider`) |
 | Metadata probe, multi-audio-track picker | Custom backend provider |
-| Streaming audio extraction → 16 kHz mono | Translation |
-| Silence-seeking chunker + timestamp merge | Word-level timestamp editing |
-| OpenAI `whisper-1` transcription | Instrumented tests, long-video soak |
+| Streaming audio extraction → 16 kHz mono | Word-level timestamp editing |
+| Silence-seeking chunker + timestamp merge | |
+| OpenAI `whisper-1` transcription | Long-video soak testing |
 | WorkManager job: progress, cancel, resume | |
 | Subtitle editor: edit, split, merge, retime, search | |
 | Video preview with live subtitles | |
 | SRT / WebVTT export via SAF | |
 | Burn-in export (media3 `Transformer`) | |
+| **Translate speech → English while transcribing** | |
+| **Translate finished subtitles to any language** | |
 
 ## Build
 
 Requires JDK 17+, Android SDK with platform 37 and build-tools 37.0.0.
 
 ```bash
-./gradlew :app:assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest  # 50 unit tests
+./gradlew :app:assembleDebug            # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest        # 68 unit tests
+./gradlew :app:connectedDebugAndroidTest  # Room migration test (needs a device)
 ```
 
 Install: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
@@ -49,6 +52,21 @@ no keystore is committed to this repository.
 
 The key is encrypted with an AES-256-GCM key held in the Android Keystore, stored in a
 SharedPreferences file excluded from backup and device transfer, and never logged.
+
+## Translating to English
+
+Two options, and the cheaper one is easy to miss:
+
+**While transcribing** — on the import screen, pick *"English subtitles"*. Whisper translates
+the speech directly. **This costs nothing extra** and the timings are tighter, because they
+come from the audio. English only.
+
+**After transcribing** — the translate button in the editor. Works on projects you have
+already transcribed (no re-upload, no second transcription charge), targets any supported
+language, and keeps the original text alongside so you can switch between *Original*,
+*Translation* and *Both* in the editor, in the export, and in the burned-in video.
+
+Only subtitle text is sent for the second option; audio and video are not.
 
 ## Costs and data use
 

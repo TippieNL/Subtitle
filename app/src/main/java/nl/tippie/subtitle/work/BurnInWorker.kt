@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import nl.tippie.subtitle.AppContainer
 import nl.tippie.subtitle.domain.model.ProcessingError
+import nl.tippie.subtitle.domain.model.SubtitleTrack
 import nl.tippie.subtitle.media.burnin.BurnInEngine
 import nl.tippie.subtitle.media.burnin.BurnInException
 import java.io.File
@@ -39,7 +40,11 @@ class BurnInWorker(
             ?: return androidx.work.ListenableWorker.Result.failure(
                 error(ProcessingError.Unexpected("export", IllegalStateException("project missing")))
             )
+        val track = runCatching {
+            SubtitleTrack.valueOf(inputData.getString(KEY_TRACK) ?: SubtitleTrack.ORIGINAL.name)
+        }.getOrDefault(SubtitleTrack.ORIGINAL)
         val cues = container.repository.getCues(projectId)
+            .map { if (track == SubtitleTrack.ORIGINAL) it else it.copy(text = it.textFor(track)) }
         if (cues.isEmpty()) {
             return androidx.work.ListenableWorker.Result.failure(
                 error(ProcessingError.Unexpected("export", IllegalStateException("no subtitles to burn in")))
@@ -119,6 +124,7 @@ class BurnInWorker(
     companion object {
         const val KEY_PROJECT_ID = "projectId"
         const val KEY_DESTINATION_URI = "destinationUri"
+        const val KEY_TRACK = "track"
         fun uniqueName(projectId: Long) = "burnin:$projectId"
     }
 }

@@ -1,5 +1,6 @@
 package nl.tippie.subtitle.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -19,6 +20,11 @@ data class ProjectEntity(
     val detectedLanguage: String?,
     val providerKey: String,
     val status: String,
+    // Defaults are declared on the column, not just the constructor, so the schema and
+    // MIGRATION_1_2 state the same thing and Room can verify it.
+    @ColumnInfo(defaultValue = "TRANSCRIBE") val task: String = "TRANSCRIBE",
+    val translationLanguage: String? = null,
+    @ColumnInfo(defaultValue = "0") val translatedCues: Int = 0,
     val processedMs: Long = 0,
     val totalChunks: Int = 0,
     val completedChunks: Int = 0,
@@ -71,4 +77,5 @@ data class CueEntity(
     val endMs: Long,
     val text: String,
     val chunkIndex: Int,
+    val translatedText: String? = null,
 )

@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import nl.tippie.subtitle.work.BurnInWorker
 import nl.tippie.subtitle.work.ProcessingNotifications
 import nl.tippie.subtitle.work.TranscriptionWorker
+import nl.tippie.subtitle.work.TranslationWorker
 
 class SubtitleApplication : Application(), Configuration.Provider {
 
@@ -45,6 +46,7 @@ class AppWorkerFactory(private val container: AppContainer) : WorkerFactory() {
     ): ListenableWorker? = when (workerClassName) {
         TranscriptionWorker::class.java.name -> TranscriptionWorker(appContext, workerParameters, container)
         BurnInWorker::class.java.name -> BurnInWorker(appContext, workerParameters, container)
+        TranslationWorker::class.java.name -> TranslationWorker(appContext, workerParameters, container)
         else -> null
     }
 }

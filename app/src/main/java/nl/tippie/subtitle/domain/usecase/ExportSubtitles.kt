@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import nl.tippie.subtitle.domain.model.Cue
 import nl.tippie.subtitle.domain.model.ProcessingError
 import nl.tippie.subtitle.domain.model.SubtitleStyle
+import nl.tippie.subtitle.domain.model.SubtitleTrack
 import nl.tippie.subtitle.subtitle.format.SrtWriter
 import nl.tippie.subtitle.subtitle.format.SubtitleFormat
 import nl.tippie.subtitle.subtitle.format.VttWriter
@@ -25,28 +26,40 @@ class ExportSubtitles(private val context: Context) {
         format: SubtitleFormat,
         destination: Uri,
         style: SubtitleStyle? = null,
+        track: SubtitleTrack = SubtitleTrack.ORIGINAL,
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        val projected = cues.project(track)
         runCatching {
             context.contentResolver.openOutputStream(destination, "wt")
                 ?.bufferedWriter(Charsets.UTF_8)
                 ?.use { writer ->
                     when (format) {
-                        SubtitleFormat.SRT -> SrtWriter.write(cues, writer)
-                        SubtitleFormat.VTT -> VttWriter.write(cues, writer, style?.let(::vttCss))
+                        SubtitleFormat.SRT -> SrtWriter.write(projected, writer)
+                        SubtitleFormat.VTT -> VttWriter.write(projected, writer, style?.let(::vttCss))
                     }
                 } ?: throw java.io.IOException("could not open the selected file for writing")
         }.recoverCatching { throw ExportException(ProcessingError.ExportWriteFailed(it)) }
     }
 
     /** Writes a throwaway VTT for the in-app preview player. */
-    suspend fun toPreviewFile(cues: List<Cue>, projectId: Long): File? = withContext(Dispatchers.IO) {
+    suspend fun toPreviewFile(
+        cues: List<Cue>,
+        projectId: Long,
+        track: SubtitleTrack = SubtitleTrack.ORIGINAL,
+    ): File? = withContext(Dispatchers.IO) {
         runCatching {
             val dir = File(context.cacheDir, "preview").apply { mkdirs() }
-            val file = File(dir, "preview_$projectId.vtt")
-            file.bufferedWriter(Charsets.UTF_8).use { VttWriter.write(cues, it) }
+            // Track is part of the name so switching tracks makes the player reload.
+            val file = File(dir, "preview_${projectId}_${track.name.lowercase()}.vtt")
+            file.bufferedWriter(Charsets.UTF_8).use { VttWriter.write(cues.project(track), it) }
             file
         }.getOrNull()
     }
+
+    /** Swaps each cue's text for the chosen track, leaving timings untouched. */
+    private fun List<Cue>.project(track: SubtitleTrack): List<Cue> =
+        if (track == SubtitleTrack.ORIGINAL) this
+        else map { it.copy(text = it.textFor(track)) }
 
     private fun vttCss(style: SubtitleStyle): String = buildString {
         append("::cue {\n")
@@ -64,10 +77,20 @@ class ExportSubtitles(private val context: Context) {
         return "rgba($r, $g, $b, ${"%.2f".format(a)})"
     }
 
-    fun suggestedFileName(projectName: String, format: SubtitleFormat): String {
+    fun suggestedFileName(
+        projectName: String,
+        format: SubtitleFormat,
+        track: SubtitleTrack = SubtitleTrack.ORIGINAL,
+        targetLanguage: String? = null,
+    ): String {
         val base = projectName.substringBeforeLast('.').ifBlank { "subtitles" }
             .replace(Regex("[^A-Za-z0-9 _.-]"), "_")
-        return "$base.${format.extension}"
+        val suffix = when (track) {
+            SubtitleTrack.ORIGINAL -> ""
+            SubtitleTrack.TRANSLATION -> ".${targetLanguage ?: "translated"}"
+            SubtitleTrack.BILINGUAL -> ".bilingual"
+        }
+        return "$base$suffix.${format.extension}"
     }
 }
 

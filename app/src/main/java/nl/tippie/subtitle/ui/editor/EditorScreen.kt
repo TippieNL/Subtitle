@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,7 +32,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +53,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import nl.tippie.subtitle.domain.model.Cue
+import nl.tippie.subtitle.domain.model.SubtitleTrack
+import nl.tippie.subtitle.ui.components.LabeledDropdown
+import nl.tippie.subtitle.util.Languages
 import nl.tippie.subtitle.subtitle.format.TimeFormat
 import java.io.File
 
@@ -61,6 +69,13 @@ data class EditorUiState(
     val playbackMs: Long = 0,
     val seekTarget: Long? = null,
     val shiftDialogOpen: Boolean = false,
+    val track: SubtitleTrack = SubtitleTrack.ORIGINAL,
+    val hasTranslation: Boolean = false,
+    val translationLanguage: String? = null,
+    val translating: Boolean = false,
+    val translationProgress: Pair<Int, Int>? = null,
+    val translateDialogOpen: Boolean = false,
+    val translationTarget: String = "en",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -80,6 +95,10 @@ fun EditorScreen(
     onPositionChange: (Long) -> Unit,
     onSeek: (Long) -> Unit,
     onExport: () -> Unit,
+    onSelectTrack: (SubtitleTrack) -> Unit,
+    onOpenTranslateDialog: (Boolean) -> Unit,
+    onTranslate: (String) -> Unit,
+    onCancelTranslation: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     val visible = remember(state.cues, state.query) {
@@ -116,6 +135,12 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { onOpenTranslateDialog(true) },
+                        enabled = state.cues.isNotEmpty() && !state.translating,
+                    ) {
+                        Icon(Icons.Default.Translate, contentDescription = "Translate subtitles")
+                    }
                     IconButton(onClick = { onOpenShiftDialog(true) }) {
                         Icon(Icons.Default.Timer, contentDescription = "Shift all timings")
                     }
@@ -137,6 +162,49 @@ fun EditorScreen(
                     onPositionChange = onPositionChange,
                     seekToMs = state.seekTarget,
                 )
+            }
+
+            if (state.translating) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        state.translationProgress?.let { (done, total) ->
+                            "Translating $done of $total"
+                        } ?: "Translating…",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    LinearProgressIndicator(
+                        progress = {
+                            state.translationProgress
+                                ?.let { (done, total) -> if (total > 0) done.toFloat() / total else 0f }
+                                ?: 0f
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onCancelTranslation) { Text("Stop") }
+                }
+            }
+
+            if (state.hasTranslation) {
+                SingleChoiceSegmentedButtonRow(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    val options = listOf(
+                        SubtitleTrack.ORIGINAL to "Original",
+                        SubtitleTrack.TRANSLATION to Languages.label(state.translationLanguage),
+                        SubtitleTrack.BILINGUAL to "Both",
+                    )
+                    options.forEachIndexed { index, (track, label) ->
+                        SegmentedButton(
+                            selected = state.track == track,
+                            onClick = { onSelectTrack(track) },
+                            shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                        ) { Text(label, maxLines = 1) }
+                    }
+                }
             }
 
             OutlinedTextField(
@@ -167,6 +235,7 @@ fun EditorScreen(
                     itemsIndexed(visible, key = { _, cue -> cue.id }) { index, cue ->
                         CueRow(
                             cue = cue,
+                            track = state.track,
                             active = state.playbackMs in cue.startMs until cue.endMs,
                             expanded = state.selectedCueId == cue.id,
                             canMerge = index < visible.lastIndex,
@@ -185,11 +254,69 @@ fun EditorScreen(
     if (state.shiftDialogOpen) {
         ShiftDialog(onDismiss = { onOpenShiftDialog(false) }, onApply = onShiftAll)
     }
+
+    if (state.translateDialogOpen) {
+        TranslateDialog(
+            cueCount = state.cues.size,
+            initialTarget = state.translationTarget,
+            existingTarget = state.translationLanguage,
+            onDismiss = { onOpenTranslateDialog(false) },
+            onConfirm = { target -> onTranslate(target); onOpenTranslateDialog(false) },
+        )
+    }
+}
+
+@Composable
+private fun TranslateDialog(
+    cueCount: Int,
+    initialTarget: String,
+    existingTarget: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var target by remember { mutableStateOf(initialTarget) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Translate subtitles") },
+        text = {
+            Column {
+                Text(
+                    "Translates all $cueCount subtitles, keeping the timings and the original " +
+                        "text. You can switch between them afterwards.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(12.dp))
+                LabeledDropdown(
+                    label = "Translate into",
+                    options = Languages.supported.filterNot { it.first == Languages.AUTO },
+                    selectedKey = target,
+                    onSelect = { target = it },
+                )
+                if (existingTarget != null && existingTarget != target) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This replaces the existing ${Languages.label(existingTarget)} translation.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Subtitle text is sent to OpenAI. Audio and video are not.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(target) }) { Text("Translate") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
 private fun CueRow(
     cue: Cue,
+    track: SubtitleTrack,
     active: Boolean,
     expanded: Boolean,
     canMerge: Boolean,
@@ -230,8 +357,18 @@ private fun CueRow(
                     onValueChange = { onEdit(cue.copy(text = it)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
-                    label = { Text("Text") },
+                    label = { Text("Original") },
                 )
+                if (cue.translatedText != null) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = cue.translatedText,
+                        onValueChange = { onEdit(cue.copy(translatedText = it)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        label = { Text("Translation") },
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TimeField("Start", cue.startMs) { onEdit(cue.copy(startMs = it)) }
@@ -256,7 +393,14 @@ private fun CueRow(
                     }
                 }
             } else {
-                Text(cue.text, style = MaterialTheme.typography.bodyMedium)
+                Text(cue.textFor(track), style = MaterialTheme.typography.bodyMedium)
+                if (track == SubtitleTrack.TRANSLATION && cue.translatedText.isNullOrBlank()) {
+                    Text(
+                        "not translated",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

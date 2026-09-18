@@ -571,7 +571,95 @@ Three things had to change from the Phase 1 plan once the build ran:
 | 4 | Editor (list + player), split/merge/retime/search, SRT/VTT read+write, styling, burn-in via Transformer | **done** |
 | 5 | Unit tests (50, passing). Instrumented Room/Worker tests, long-video soak, memory profiling, device matrix still to do | partial |
 | 6 | `LocalWhisperProvider` (whisper.cpp), model manager | |
-| 7 | Translation, `BackendTranscriptionProvider` | |
+| T | Translation — both paths (§13) | **done** |
+| 7 | `BackendTranscriptionProvider` | |
 
 **MVP cut line** = end of Phase 4 with the OpenAI provider: select → transcribe a
 2-hour video → edit → export SRT. That is a genuinely useful app.
+
+
+---
+
+## 13. Translation
+
+Two separate mechanisms, because "translate the subtitles" means two different things
+depending on whether you have transcribed yet.
+
+### 13.1 Speech → English, during transcription (`TranscriptionTask.TRANSLATE_TO_ENGLISH`)
+
+Whisper exposes `/v1/audio/translations` alongside `/v1/audio/transcriptions`: same model,
+same price, same multipart shape, but the output is English regardless of what was spoken.
+`WhisperApiProvider` simply routes to the other URL.
+
+This is the better path whenever English is the goal and nothing has been transcribed yet:
+
+- **No extra cost.** It replaces the transcription call, it does not add one.
+- **Better timings.** Timestamps come from the audio, so the existing merge pipeline
+  applies unchanged and nothing needs re-aligning.
+- **No fragment problem** (see §13.2).
+
+Two constraints, both inherent to the endpoint: the target is **always English** — there is
+no target-language parameter — and the endpoint rejects `language` and
+`timestamp_granularities[]`, so the provider omits both when translating. `verbose_json`
+still returns per-segment timings.
+
+Chosen on the Import screen, stored per project in `projects.task`, and surfaced only when
+the provider declares `supportsTranslationToEnglish`.
+
+### 13.2 Subtitles → any language, after the fact (`TranslationWorker`)
+
+Translating the finished cues, via `TranslationProvider` → `OpenAiTranslationProvider`
+(chat completions, JSON mode). Needed whenever §13.1 does not apply:
+
+- the project is **already transcribed** — re-running §13.1 means re-extracting, re-uploading
+  and paying the full transcription price again, versus a few cents of tokens here;
+- the target is **not English**;
+- you want the **original kept alongside** the translation.
+
+**Storage.** `cues.translatedText` is a separate nullable column. The original `text` is
+never overwritten. A bad translation is therefore always recoverable, and `SubtitleTrack`
+(`ORIGINAL` / `TRANSLATION` / `BILINGUAL`) chooses what the editor, the preview player, the
+subtitle export and the burn-in each render.
+
+**The failure mode that actually matters.** Every cue maps to a timestamp we already know is
+correct. If a model is given 20 lines and returns 19 — because it merged two short cues into
+one better-reading sentence — then line 19 onwards inherits the wrong text and *every
+subsequent subtitle in the file is wrong*. Silent corruption, invisible until playback.
+
+So the count is treated as a hard contract:
+
+- Lines are numbered and the response is JSON (`{"lines":[{"n":1,"t":"…"}]}`), which makes a
+  miscount detectable rather than plausible-looking.
+- A miscount is **never** patched by padding or truncating. The batch is split in half and
+  retried, recursively, down to a single line. One line cannot be miscounted, so the
+  recursion terminates in either a correct translation or a failure scoped to that one cue.
+- A non-retryable error (bad key, retired model) short-circuits instead of binary-searching
+  through 39 doomed requests.
+
+**Context.** Cues are frequently mid-sentence fragments, because `CueSegmenter` split them
+for readability. Translating a fragment in isolation produces wrong pronouns, tense and word
+order — worst in languages whose syntax differs most from the source. Each request therefore
+carries the batch as a numbered block plus the preceding 3 lines as context-only input.
+This mitigates the problem; it does not eliminate it, and §13.1 avoids it entirely by working
+from the audio.
+
+**Re-wrapping.** Translated text rarely matches the source length, so each line is
+re-wrapped with `CueSegmenter.wrap` after translation. Timings are never touched — only the
+line break moves.
+
+**Resume** is simpler than transcription's: the worker asks the DAO for cues with no
+translation, so an interrupted run continues exactly where it stopped and re-running is also
+how you retry failed lines. Changing the target language clears the previous translation
+first.
+
+**Privacy.** Subtitle *text* is sent to OpenAI; audio and video are not. Declared on
+`TranslationCapabilities.sendsTextOffDevice`, the same pattern as the transcription side, and
+stated in the translate dialog.
+
+### 13.3 Schema migration
+
+Adding translation took the database to v2: `cues.translatedText`, `projects.task`,
+`projects.translationLanguage`, `projects.translatedCues`. `MIGRATION_1_2` is purely
+additive with column-level defaults declared on the entities, so the schema and the migration
+state the same thing and Room can validate it. Destructive migration is deliberately not
+enabled — a v1 database can hold hours of paid transcription.

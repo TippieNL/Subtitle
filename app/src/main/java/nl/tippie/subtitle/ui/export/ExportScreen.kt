@@ -24,6 +24,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,7 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import nl.tippie.subtitle.domain.model.SubtitleTrack
 import nl.tippie.subtitle.subtitle.format.SubtitleFormat
+import nl.tippie.subtitle.util.Languages
 import nl.tippie.subtitle.ui.ExportUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,6 +44,7 @@ fun ExportScreen(
     state: ExportUiState,
     onBack: () -> Unit,
     onSelectFormat: (SubtitleFormat) -> Unit,
+    onSelectTrack: (SubtitleTrack) -> Unit,
     onPickDestination: () -> Unit,
     onBurnIn: () -> Unit,
     onOpenStyle: () -> Unit,
@@ -66,6 +70,45 @@ fun ExportScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            if (state.hasTranslation) {
+                Spacer(Modifier.height(20.dp))
+                Text("Which subtitles", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 8.dp))
+                Column(Modifier.selectableGroup()) {
+                    val options = listOf(
+                        SubtitleTrack.ORIGINAL to ("Original" to "As spoken."),
+                        SubtitleTrack.TRANSLATION to
+                            (Languages.label(state.translationLanguage) to "The translation only."),
+                        SubtitleTrack.BILINGUAL to
+                            ("Both" to "Translation on top, original underneath."),
+                    )
+                    options.forEach { (track, labels) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = state.track == track,
+                                onClick = { onSelectTrack(track) },
+                            )
+                            Column {
+                                Text(labels.first, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    labels.second,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (state.untranslatedCount > 0 && state.track != SubtitleTrack.ORIGINAL) {
+                    Text(
+                        "${state.untranslatedCount} subtitles have no translation and will fall " +
+                            "back to the original text.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
 
             Spacer(Modifier.height(20.dp))
             Text("Subtitle file", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

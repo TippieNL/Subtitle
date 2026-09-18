@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.map
 import nl.tippie.subtitle.domain.model.ProviderId
 import nl.tippie.subtitle.domain.model.SubtitleStyle
 import nl.tippie.subtitle.media.sink.ChunkEncoding
+import nl.tippie.subtitle.subtitle.SubtitleTranslator
+import nl.tippie.subtitle.translation.openai.OpenAiTranslationProvider
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore("settings")
 
@@ -29,6 +31,10 @@ data class AppSettings(
     val cloudUploadAcknowledged: Boolean = false,
     val requireUnmetered: Boolean = false,
     val style: SubtitleStyle = SubtitleStyle(),
+    // --- translation ---
+    val translationTarget: String = "en",
+    val translationModel: String = OpenAiTranslationProvider.DEFAULT_MODEL,
+    val translationBatchSize: Int = SubtitleTranslator.DEFAULT_BATCH_SIZE,
 ) {
     val targetChunkMs: Long get() = chunkMinutes.coerceIn(1, 20) * 60_000L
 }
@@ -56,6 +62,9 @@ class SettingsStore(private val context: Context) {
                 }.getOrDefault(SubtitleStyle.VerticalPosition.BOTTOM),
                 bottomMarginPercent = p[MARGIN] ?: 6f,
             ),
+            translationTarget = p[TRANSLATION_TARGET] ?: "en",
+            translationModel = p[TRANSLATION_MODEL] ?: OpenAiTranslationProvider.DEFAULT_MODEL,
+            translationBatchSize = p[TRANSLATION_BATCH] ?: SubtitleTranslator.DEFAULT_BATCH_SIZE,
         )
     }
 
@@ -69,6 +78,14 @@ class SettingsStore(private val context: Context) {
     suspend fun setWordTimestamps(value: Boolean) = edit { it[WORD_TS] = value }
     suspend fun setCloudAcknowledged(value: Boolean) = edit { it[CLOUD_ACK] = value }
     suspend fun setRequireUnmetered(value: Boolean) = edit { it[UNMETERED] = value }
+
+    suspend fun setTranslationTarget(code: String) = edit { it[TRANSLATION_TARGET] = code }
+    suspend fun setTranslationModel(model: String) = edit {
+        it[TRANSLATION_MODEL] = model.trim().ifBlank { OpenAiTranslationProvider.DEFAULT_MODEL }
+    }
+    suspend fun setTranslationBatchSize(value: Int) = edit {
+        it[TRANSLATION_BATCH] = value.coerceIn(5, 40)
+    }
 
     suspend fun setStyle(style: SubtitleStyle) = edit {
         it[FONT_SIZE] = style.fontSizeSp
@@ -98,5 +115,8 @@ class SettingsStore(private val context: Context) {
         val OUTLINE = booleanPreferencesKey("outline")
         val POSITION = stringPreferencesKey("position")
         val MARGIN = floatPreferencesKey("margin")
+        val TRANSLATION_TARGET = stringPreferencesKey("translation_target")
+        val TRANSLATION_MODEL = stringPreferencesKey("translation_model")
+        val TRANSLATION_BATCH = intPreferencesKey("translation_batch")
     }
 }

@@ -77,3 +77,39 @@ object TranscriptionScheduler {
 
     fun tag(projectId: Long) = "project:$projectId"
 }
+
+object TranslationScheduler {
+
+    fun start(context: Context, projectId: Long, targetLanguage: String, requireUnmetered: Boolean) {
+        val request = OneTimeWorkRequestBuilder<TranslationWorker>()
+            .setInputData(
+                Data.Builder()
+                    .putLong(TranslationWorker.KEY_PROJECT_ID, projectId)
+                    .putString(TranslationWorker.KEY_TARGET_LANGUAGE, targetLanguage)
+                    .build()
+            )
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(
+                        if (requireUnmetered) NetworkType.UNMETERED else NetworkType.CONNECTED
+                    )
+                    .build()
+            )
+            .addTag(TranscriptionScheduler.tag(projectId))
+            .build()
+
+        // REPLACE, not KEEP: re-running is the documented way to retry failed lines, and
+        // the worker skips anything already translated.
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(TranslationWorker.uniqueName(projectId), ExistingWorkPolicy.REPLACE, request)
+    }
+
+    fun cancel(context: Context, projectId: Long) {
+        WorkManager.getInstance(context).cancelUniqueWork(TranslationWorker.uniqueName(projectId))
+    }
+
+    fun observe(context: Context, projectId: Long): Flow<WorkInfo?> =
+        WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWorkFlow(TranslationWorker.uniqueName(projectId))
+            .map { it.firstOrNull() }
+}

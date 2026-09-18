@@ -12,6 +12,8 @@ import nl.tippie.subtitle.domain.model.ProviderId
 import nl.tippie.subtitle.media.MediaInfoReader
 import nl.tippie.subtitle.transcription.TranscriptionProvider
 import nl.tippie.subtitle.transcription.openai.WhisperApiProvider
+import nl.tippie.subtitle.translation.TranslationProvider
+import nl.tippie.subtitle.translation.openai.OpenAiTranslationProvider
 import java.io.File
 
 /**
@@ -69,6 +71,12 @@ class AppContainer(private val context: Context) {
             ProviderId.CUSTOM_BACKEND ->
                 throw UnavailableProviderException(ProcessingError.ProviderUnavailable("Custom backend"))
         }
+
+    fun translationProviderFor(settings: AppSettings): TranslationProvider =
+        OpenAiTranslationProvider(
+            apiKeyProvider = { apiKeyStore.get(ApiKeyStore.OPENAI) },
+            model = settings.translationModel,
+        )
 }
 
 class UnavailableProviderException(val error: ProcessingError) : Exception(error.userMessage)

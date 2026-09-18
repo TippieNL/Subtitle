@@ -9,6 +9,7 @@ import nl.tippie.subtitle.domain.model.Cue
 import nl.tippie.subtitle.domain.model.MediaInfo
 import nl.tippie.subtitle.domain.model.ProjectStatus
 import nl.tippie.subtitle.domain.model.SubtitleProject
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 
 class ProjectRepository(private val db: SubtitleDatabase) {
 
@@ -30,6 +31,7 @@ class ProjectRepository(private val db: SubtitleDatabase) {
         audioTrackIndex: Int,
         language: String?,
         providerKey: String,
+        task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
     ): Long {
         val now = System.currentTimeMillis()
         return projectDao.insert(
@@ -45,6 +47,7 @@ class ProjectRepository(private val db: SubtitleDatabase) {
                 detectedLanguage = null,
                 providerKey = providerKey,
                 status = ProjectStatus.DRAFT.name,
+                task = task.name,
                 createdAt = now,
                 updatedAt = now,
             )
@@ -81,12 +84,20 @@ class ProjectRepository(private val db: SubtitleDatabase) {
         cueDao.forProject(projectId).mapIndexed { i, e -> e.toDomain(i) }
 
     suspend fun updateCue(cue: Cue) = cueDao.update(
-        CueEntity(cue.id, cue.projectId, cue.startMs, cue.endMs, cue.text, cue.chunkIndex)
+        CueEntity(
+            cue.id, cue.projectId, cue.startMs, cue.endMs, cue.text, cue.chunkIndex,
+            cue.translatedText
+        )
     )
 
     suspend fun insertCue(cue: Cue): Long = cueDao.insert(
-        CueEntity(0, cue.projectId, cue.startMs, cue.endMs, cue.text, cue.chunkIndex)
+        CueEntity(
+            0, cue.projectId, cue.startMs, cue.endMs, cue.text, cue.chunkIndex,
+            cue.translatedText
+        )
     )
+
+    suspend fun clearTranslations(projectId: Long) = cueDao.clearTranslations(projectId)
 
     suspend fun deleteCue(id: Long) = cueDao.delete(id)
 
@@ -133,7 +144,9 @@ class ProjectRepository(private val db: SubtitleDatabase) {
     suspend fun replaceAllCues(projectId: Long, cues: List<Cue>) {
         cueDao.deleteForProject(projectId)
         cueDao.insertAll(
-            cues.map { CueEntity(0, projectId, it.startMs, it.endMs, it.text, it.chunkIndex) }
+            cues.map {
+                CueEntity(0, projectId, it.startMs, it.endMs, it.text, it.chunkIndex, it.translatedText)
+            }
         )
     }
 }
@@ -151,6 +164,9 @@ fun ProjectEntity.toDomain() = SubtitleProject(
     detectedLanguage = detectedLanguage,
     providerKey = providerKey,
     status = runCatching { ProjectStatus.valueOf(status) }.getOrDefault(ProjectStatus.DRAFT),
+    task = runCatching { TranscriptionTask.valueOf(task) }.getOrDefault(TranscriptionTask.TRANSCRIBE),
+    translationLanguage = translationLanguage,
+    translatedCues = translatedCues,
     processedMs = processedMs,
     totalChunks = totalChunks,
     completedChunks = completedChunks,
@@ -167,4 +183,5 @@ fun CueEntity.toDomain(index: Int) = Cue(
     endMs = endMs,
     text = text,
     chunkIndex = chunkIndex,
+    translatedText = translatedText,
 )

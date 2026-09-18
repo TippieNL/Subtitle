@@ -26,6 +26,7 @@ import nl.tippie.subtitle.domain.model.BoundaryKind
 import nl.tippie.subtitle.domain.model.ChunkState
 import nl.tippie.subtitle.domain.model.ProcessingError
 import nl.tippie.subtitle.domain.model.ProjectStatus
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 import nl.tippie.subtitle.media.AudioDecoder
 import nl.tippie.subtitle.media.ChunkRecord
 import nl.tippie.subtitle.media.ProcessingErrorException
@@ -139,7 +140,11 @@ class TranscriptionWorker(
                             val entity = persistChunkBlocking(projectId, record)
                             jobs += async {
                                 semaphore.withPermit {
-                                    transcribeChunk(projectId, entity, record, provider, settings.defaultLanguage, settings.wordTimestamps)
+                                    transcribeChunk(
+                                        projectId, entity, record, provider,
+                                        settings.defaultLanguage, settings.wordTimestamps,
+                                        project.task,
+                                    )
                                 }
                             }
                         }
@@ -237,6 +242,7 @@ class TranscriptionWorker(
         provider: TranscriptionProvider,
         language: String,
         wordTimestamps: Boolean,
+        task: TranscriptionTask,
     ) {
         if (isStopped) return
 
@@ -257,6 +263,7 @@ class TranscriptionWorker(
                     language = language.takeUnless { it == "auto" },
                     contextPrompt = previousTail,
                     wantWordTimestamps = wordTimestamps,
+                    task = task,
                 )
             )
 

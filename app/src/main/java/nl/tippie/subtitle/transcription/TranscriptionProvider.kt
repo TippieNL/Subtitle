@@ -2,6 +2,7 @@ package nl.tippie.subtitle.transcription
 
 import nl.tippie.subtitle.domain.model.ProcessingError
 import nl.tippie.subtitle.domain.model.ProviderId
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 import nl.tippie.subtitle.media.sink.ChunkEncoding
 import java.io.File
 
@@ -34,6 +35,8 @@ data class ProviderCapabilities(
     val supportsLanguageDetection: Boolean,
     val supportsWordTimestamps: Boolean,
     val supportsContextPrompt: Boolean,
+    /** Can translate speech directly to English via [TranscriptionTask.TRANSLATE_TO_ENGLISH]. */
+    val supportsTranslationToEnglish: Boolean,
     val requiresNetwork: Boolean,
     /**
      * Read by the UI to render the upload warning. Being part of the contract means a
@@ -59,6 +62,8 @@ data class ChunkRequest(
     val language: String?,
     val contextPrompt: String?,
     val wantWordTimestamps: Boolean,
+    /** Transcribe in the spoken language, or translate the speech straight to English. */
+    val task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
 )
 
 data class RawSegment(val startMs: Long, val endMs: Long, val text: String)

@@ -7,7 +7,22 @@ package nl.tippie.subtitle.domain.model
  * domain, the database and the UI.
  */
 
-enum class ProjectStatus { DRAFT, EXTRACTING, TRANSCRIBING, COMPLETED, FAILED, CANCELLED, PAUSED }
+enum class ProjectStatus {
+    DRAFT, EXTRACTING, TRANSCRIBING, COMPLETED, FAILED, CANCELLED, PAUSED, TRANSLATING
+}
+
+/**
+ * What the speech-to-text step should produce.
+ *
+ * [TRANSLATE_TO_ENGLISH] uses Whisper's translation endpoint, which turns foreign speech
+ * directly into English text. It costs the same as transcription and its timestamps come
+ * from the audio itself, so it is strictly better than transcribing and then translating
+ * the text — when English is the target and you have not transcribed yet.
+ */
+enum class TranscriptionTask { TRANSCRIBE, TRANSLATE_TO_ENGLISH }
+
+/** Which text a screen or export should use. */
+enum class SubtitleTrack { ORIGINAL, TRANSLATION, BILINGUAL }
 
 enum class ChunkState { PENDING, EXTRACTED, TRANSCRIBED, FAILED }
 
@@ -65,8 +80,19 @@ data class Cue(
     val endMs: Long,
     val text: String,
     val chunkIndex: Int = 0,
+    /** Null until a translation pass has run. The original [text] is never overwritten. */
+    val translatedText: String? = null,
 ) {
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(0)
+
+    /** The text to render for [track], falling back to the original when untranslated. */
+    fun textFor(track: SubtitleTrack): String = when (track) {
+        SubtitleTrack.ORIGINAL -> text
+        SubtitleTrack.TRANSLATION -> translatedText ?: text
+        SubtitleTrack.BILINGUAL ->
+            if (translatedText.isNullOrBlank()) text
+            else "${translatedText.replace("\n", " ")}\n${text.replace("\n", " ")}"
+    }
 
     /** Characters per second — the standard readability metric for subtitles. */
     val charsPerSecond: Double
@@ -87,6 +113,10 @@ data class SubtitleProject(
     val detectedLanguage: String?,
     val providerKey: String,
     val status: ProjectStatus,
+    val task: TranscriptionTask,
+    /** ISO code of the language the cues have been translated into, if any. */
+    val translationLanguage: String?,
+    val translatedCues: Int,
     val processedMs: Long,
     val totalChunks: Int,
     val completedChunks: Int,
@@ -117,6 +147,7 @@ data class SubtitleStyle(
 data class TranscriptionConfig(
     val providerKey: String,
     val language: String?,            // null = auto-detect
+    val task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
     val targetChunkMs: Long = 300_000,
     val parallelRequests: Int = 2,
     val wordTimestamps: Boolean = false,

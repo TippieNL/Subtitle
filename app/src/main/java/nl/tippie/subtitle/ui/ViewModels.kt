@@ -28,6 +28,8 @@ import nl.tippie.subtitle.domain.model.ProjectStatus
 import nl.tippie.subtitle.domain.model.ProviderId
 import nl.tippie.subtitle.domain.model.SubtitleProject
 import nl.tippie.subtitle.domain.model.SubtitleStyle
+import nl.tippie.subtitle.domain.model.SubtitleTrack
+import nl.tippie.subtitle.domain.model.TranscriptionTask
 import nl.tippie.subtitle.domain.usecase.ExportSubtitles
 import nl.tippie.subtitle.media.sink.ChunkEncoding
 import nl.tippie.subtitle.subtitle.format.SubtitleFormat
@@ -36,6 +38,7 @@ import nl.tippie.subtitle.ui.editor.EditorUiState
 import nl.tippie.subtitle.ui.importscreen.ImportUiState
 import nl.tippie.subtitle.util.Languages
 import nl.tippie.subtitle.work.TranscriptionScheduler
+import nl.tippie.subtitle.work.TranslationScheduler
 import nl.tippie.subtitle.work.WorkProgress
 
 private val SubtitleApplication.appContainer: AppContainer get() = container
@@ -106,6 +109,8 @@ class ImportViewModel(app: Application) : ContainerViewModel(app) {
                                 else -> null
                             },
                             estimatedUploadBytes = estimateUpload(info.durationMs, settings.uploadEncoding),
+                            supportsAudioTranslation =
+                                provider?.capabilities?.supportsTranslationToEnglish == true,
                         )
                     }
                 },
@@ -133,6 +138,7 @@ class ImportViewModel(app: Application) : ContainerViewModel(app) {
 
     fun selectTrack(index: Int) = _state.update { it.copy(selectedTrackIndex = index) }
     fun selectLanguage(code: String) = _state.update { it.copy(language = code) }
+    fun selectTask(task: TranscriptionTask) = _state.update { it.copy(task = task) }
 
     /** Creates the project and enqueues the job. Returns the new project id. */
     suspend fun start(): Long? {
@@ -147,6 +153,7 @@ class ImportViewModel(app: Application) : ContainerViewModel(app) {
             audioTrackIndex = track,
             language = current.language.takeUnless { it == Languages.AUTO },
             providerKey = current.providerKey,
+            task = current.task,
         )
         if (current.language != settings.defaultLanguage) {
             container.settingsStore.setLanguage(current.language)
@@ -227,16 +234,63 @@ class EditorViewModel(app: Application, private val projectId: Long) : Container
                     it.copy(
                         projectName = project?.name.orEmpty(),
                         sourceUri = project?.sourceUri.orEmpty(),
+                        translationLanguage = project?.translationLanguage,
                     )
                 }
             }
         }
         viewModelScope.launch {
-            container.repository.observeCues(projectId).collect { cues ->
-                val preview = exporter.toPreviewFile(cues, projectId)
-                _state.update { it.copy(cues = cues, previewFile = preview) }
+            container.settingsStore.settings.collect { settings ->
+                _state.update { it.copy(translationTarget = settings.translationTarget) }
             }
         }
+        viewModelScope.launch {
+            container.repository.observeCues(projectId).collect { cues ->
+                val hasTranslation = cues.any { !it.translatedText.isNullOrBlank() }
+                val track = _state.value.track.takeIf { hasTranslation } ?: SubtitleTrack.ORIGINAL
+                val preview = exporter.toPreviewFile(cues, projectId, track)
+                _state.update {
+                    it.copy(
+                        cues = cues,
+                        previewFile = preview,
+                        hasTranslation = hasTranslation,
+                        track = track,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            TranslationScheduler.observe(getApplication(), projectId).collect { info ->
+                val running = info?.state == androidx.work.WorkInfo.State.RUNNING ||
+                    info?.state == androidx.work.WorkInfo.State.ENQUEUED
+                val progress = info?.progress?.let(WorkProgress::from)
+                _state.update {
+                    it.copy(
+                        translating = running,
+                        translationProgress = progress
+                            ?.takeIf { p -> p.chunkCount > 0 }
+                            ?.let { p -> p.chunkIndex to p.chunkCount },
+                    )
+                }
+            }
+        }
+    }
+
+    fun selectTrack(track: SubtitleTrack) = viewModelScope.launch {
+        val preview = exporter.toPreviewFile(_state.value.cues, projectId, track)
+        _state.update { it.copy(track = track, previewFile = preview) }
+    }
+
+    fun openTranslateDialog(open: Boolean) = _state.update { it.copy(translateDialogOpen = open) }
+
+    fun translate(target: String) = viewModelScope.launch {
+        container.settingsStore.setTranslationTarget(target)
+        val settings = container.settingsStore.current()
+        TranslationScheduler.start(getApplication(), projectId, target, settings.requireUnmetered)
+    }
+
+    fun cancelTranslation() {
+        TranslationScheduler.cancel(getApplication(), projectId)
     }
 
     fun setQuery(value: String) = _state.update { it.copy(query = value) }
@@ -359,6 +413,15 @@ class SettingsViewModel(app: Application) : ContainerViewModel(app) {
         container.settingsStore.setRequireUnmetered(value)
     }
     fun setStyle(style: SubtitleStyle) = viewModelScope.launch { container.settingsStore.setStyle(style) }
+    fun setTranslationTarget(code: String) = viewModelScope.launch {
+        container.settingsStore.setTranslationTarget(code)
+    }
+    fun setTranslationModel(model: String) = viewModelScope.launch {
+        container.settingsStore.setTranslationModel(model)
+    }
+    fun setTranslationBatchSize(value: Int) = viewModelScope.launch {
+        container.settingsStore.setTranslationBatchSize(value)
+    }
 
     fun clearCache() = viewModelScope.launch {
         container.clearAllCache()
@@ -379,6 +442,12 @@ data class ExportUiState(
     val message: String? = null,
     val busy: Boolean = false,
     val canBurnIn: Boolean = false,
+    val track: SubtitleTrack = SubtitleTrack.ORIGINAL,
+    val hasTranslation: Boolean = false,
+    val translationLanguage: String? = null,
+    val untranslatedCount: Int = 0,
+    /** Once the user chooses a track we stop auto-selecting one for them. */
+    val userPickedTrack: Boolean = false,
 )
 
 class ExportViewModel(app: Application, private val projectId: Long) : ContainerViewModel(app) {
@@ -395,27 +464,47 @@ class ExportViewModel(app: Application, private val projectId: Long) : Container
             container.repository.observeProject(projectId).collect { p ->
                 project = p
                 _ui.update {
-                    it.copy(projectName = p?.name.orEmpty(), canBurnIn = (p?.widthPx ?: 0) > 0)
+                    it.copy(
+                        projectName = p?.name.orEmpty(),
+                        canBurnIn = (p?.widthPx ?: 0) > 0,
+                        translationLanguage = p?.translationLanguage,
+                    )
                 }
             }
         }
         viewModelScope.launch {
             container.repository.observeCues(projectId).collect { list ->
                 cues = list
-                _ui.update { it.copy(cueCount = list.size) }
+                val translated = list.count { !it.translatedText.isNullOrBlank() }
+                _ui.update {
+                    it.copy(
+                        cueCount = list.size,
+                        hasTranslation = translated > 0,
+                        untranslatedCount = list.size - translated,
+                        // Default to the translation when there is one: that is almost
+                        // always why the user translated in the first place.
+                        track = if (translated > 0 && !it.userPickedTrack) SubtitleTrack.TRANSLATION
+                        else it.track,
+                    )
+                }
             }
         }
     }
 
     fun setFormat(format: SubtitleFormat) = _ui.update { it.copy(format = format) }
 
-    fun suggestedName(): String =
-        exporter.suggestedFileName(_ui.value.projectName, _ui.value.format)
+    fun setTrack(track: SubtitleTrack) = _ui.update {
+        it.copy(track = track, userPickedTrack = true)
+    }
+
+    fun suggestedName(): String = exporter.suggestedFileName(
+        _ui.value.projectName, _ui.value.format, _ui.value.track, _ui.value.translationLanguage
+    )
 
     fun export(destination: Uri) = viewModelScope.launch {
         _ui.update { it.copy(busy = true, message = null) }
         val style = container.settingsStore.current().style
-        val result = exporter.toUri(cues, _ui.value.format, destination, style)
+        val result = exporter.toUri(cues, _ui.value.format, destination, style, _ui.value.track)
         _ui.update {
             it.copy(
                 busy = false,
@@ -436,6 +525,7 @@ class ExportViewModel(app: Application, private val projectId: Long) : Container
                 androidx.work.Data.Builder()
                     .putLong(nl.tippie.subtitle.work.BurnInWorker.KEY_PROJECT_ID, projectId)
                     .putString(nl.tippie.subtitle.work.BurnInWorker.KEY_DESTINATION_URI, destination.toString())
+                    .putString(nl.tippie.subtitle.work.BurnInWorker.KEY_TRACK, _ui.value.track.name)
                     .build()
             )
             .build()
