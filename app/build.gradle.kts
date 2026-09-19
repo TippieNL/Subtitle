@@ -14,8 +14,8 @@ android {
         applicationId = "nl.tippie.subtitle"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.2.0-translate"
+        versionCode = 3
+        versionName = "0.2.1-hardened"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -48,6 +48,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric needs the merged manifest and resources to run Android code on the JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -99,6 +101,11 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.truth)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.junit)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.espresso.core)

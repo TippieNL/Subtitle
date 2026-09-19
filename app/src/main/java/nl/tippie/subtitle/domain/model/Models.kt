@@ -94,6 +94,19 @@ data class Cue(
             else "${translatedText.replace("\n", " ")}\n${text.replace("\n", " ")}"
     }
 
+    companion object {
+        /** Minimum time either side of a split; shared with the repository's guard. */
+        const val MIN_SPLIT_MS = 100L
+    }
+
+    /**
+     * Whether [nl.tippie.subtitle.data.ProjectRepository.splitCue] can actually divide
+     * this cue. Mirrors that method's guards so the editor can disable the button rather
+     * than offer an action that silently does nothing.
+     */
+    val canSplit: Boolean
+        get() = durationMs >= MIN_SPLIT_MS * 2 && text.replace("\n", " ").trim().contains(' ')
+
     /** Characters per second — the standard readability metric for subtitles. */
     val charsPerSecond: Double
         get() = if (durationMs <= 0) Double.MAX_VALUE

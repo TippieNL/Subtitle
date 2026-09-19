@@ -24,10 +24,10 @@ import java.io.File
  * Every dependency is constructed here and passed explicitly, so swapping one in a test is
  * assignment, not a compiler plugin. Introduce Hilt when the graph outgrows one screenful.
  */
-class AppContainer(private val context: Context) {
+open class AppContainer(private val context: Context) {
 
-    val database: SubtitleDatabase by lazy { SubtitleDatabase.build(context) }
-    val repository: ProjectRepository by lazy { ProjectRepository(database) }
+    open val database: SubtitleDatabase by lazy { SubtitleDatabase.build(context) }
+    open val repository: ProjectRepository by lazy { ProjectRepository(database) }
     val settingsStore: SettingsStore by lazy { SettingsStore(context) }
     val apiKeyStore: ApiKeyStore by lazy { ApiKeyStore(context) }
     val mediaInfoReader: MediaInfoReader by lazy { MediaInfoReader(context) }
@@ -58,7 +58,7 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    fun providerFor(settings: AppSettings): TranscriptionProvider =
+    open fun providerFor(settings: AppSettings): TranscriptionProvider =
         when (ProviderId.fromKey(settings.providerKey)) {
             ProviderId.OPENAI_WHISPER -> WhisperApiProvider(
                 apiKeyProvider = { apiKeyStore.get(ApiKeyStore.OPENAI) },
@@ -72,7 +72,7 @@ class AppContainer(private val context: Context) {
                 throw UnavailableProviderException(ProcessingError.ProviderUnavailable("Custom backend"))
         }
 
-    fun translationProviderFor(settings: AppSettings): TranslationProvider =
+    open fun translationProviderFor(settings: AppSettings): TranslationProvider =
         OpenAiTranslationProvider(
             apiKeyProvider = { apiKeyStore.get(ApiKeyStore.OPENAI) },
             model = settings.translationModel,

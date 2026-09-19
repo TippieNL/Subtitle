@@ -376,7 +376,7 @@ private fun CueRow(
                 }
                 Spacer(Modifier.height(4.dp))
                 Row {
-                    TextButton(onClick = onSplit) {
+                    TextButton(onClick = onSplit, enabled = cue.canSplit) {
                         Icon(Icons.Default.CallSplit, contentDescription = null)
                         Text(" Split")
                     }

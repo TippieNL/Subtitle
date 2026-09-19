@@ -569,7 +569,7 @@ Three things had to change from the Phase 1 plan once the build ran:
 | 2 | Gradle version catalog, manifest, DI, navigation, theme, Room schema | **done** |
 | 3 | Picker, metadata, `AudioDecoder`, chunker, `TranscriptionProvider` + OpenAI impl, `TimelineMerger`, `CueSegmenter`, `TranscriptionWorker`, progress/cancel/resume | **done** |
 | 4 | Editor (list + player), split/merge/retime/search, SRT/VTT read+write, styling, burn-in via Transformer | **done** |
-| 5 | Unit tests (50, passing). Instrumented Room/Worker tests, long-video soak, memory profiling, device matrix still to do | partial |
+| 5 | Tests (see §14). Device matrix still to do | **done** |
 | 6 | `LocalWhisperProvider` (whisper.cpp), model manager | |
 | T | Translation — both paths (§13) | **done** |
 | 7 | `BackendTranscriptionProvider` | |
@@ -663,3 +663,65 @@ Adding translation took the database to v2: `cues.translatedText`, `projects.tas
 additive with column-level defaults declared on the entities, so the schema and the migration
 state the same thing and Room can validate it. Destructive migration is deliberately not
 enabled — a v1 database can hold hours of paid transcription.
+
+
+---
+
+## 14. Testing
+
+**102 tests, whole suite in under 30 seconds.** Everything runs on the JVM via
+`./gradlew :app:testDebugUnitTest`. Robolectric
+provides the Android framework, so Room, the repository and the workers are exercised for
+real rather than mocked out.
+
+There is deliberately **no instrumented (`androidTest`) source set**. An on-device test that
+nobody can run is worse than no test: it looks like coverage and provides none. The Room
+migration, the DAOs and the workers all run under Robolectric instead, so they execute in
+CI and on any developer machine.
+
+### What is covered, and why each exists
+
+| Area | What it protects against |
+|---|---|
+| `SincResamplerTest` | Aliasing and level drift. Asserts passband level within 2% and that 15 kHz content is attenuated below 5% rather than folding down to 1 kHz. Also asserts block-size independence — streaming in 1 KB blocks must equal one big call, exactly. |
+| `SilenceSeekingChunkerTest` | Lost or duplicated audio at boundaries, and non-determinism. Determinism is load-bearing: resume assumes chunk N covers the same audio on every run. |
+| `LongVideoSoakTest` | Drift. Three hours and twelve hours of audio are **generated as they are fed**, never materialised — 3 h of 16 kHz mono is 345 MB, so a test that built it as one array would prove nothing about the streaming design. Asserts the last chunk still ends at the true end of the audio, that boundaries stay contiguous, and that written samples minus replayed overlap equals the input exactly. One pause period is built once and copied cyclically rather than calling `sin()` ~1.5 billion times, which is the difference between 0.6 s and 142 s for identical coverage. |
+| `TimelineMergerTest` | The four merge steps, especially tail-hallucination dropping and seam de-duplication that keeps both versions when they disagree. |
+| `CueSegmenterTest` | Unreadable output: line length, duration and CPS ceilings, and that splitting never loses or reorders a word. |
+| `SubtitleFormatTest` | Malformed SRT/VTT, and round-tripping through the parser. |
+| `SubtitleTranslatorTest` | The miscount failure mode (§13.2): split-and-retry, per-line failure isolation, and that a non-retryable error does not binary-search through doomed requests. |
+| `TranslationTrackTest` | Blank subtitles from a partially translated file. |
+| `TranslationWorkerTest` | Off-by-one placement of translations, and that re-running only retries what failed. |
+| `MigrationTest` | An upgrade destroying paid transcription. Builds a genuine v1 database from Room's own exported v1 DDL, then opens it through the production `SubtitleDatabase.build()` path so Room's schema validation runs. |
+| `ProjectRepositoryTest` | The hand-editing operations, on data that cost money to produce. |
+| `ProcessingErrorTest` | Generic error messages. |
+
+### Bugs these tests found
+
+Worth recording, because they are the argument for writing them:
+
+1. **`splitCue` crashed** on a single-character cue and on a cue shorter than 2 ms —
+   `coerceIn` on an empty range. Now guarded by `Cue.canSplit`, which the editor also uses
+   to disable the button rather than offer an action that silently does nothing.
+2. **`splitCue` duplicated the translation** onto both halves, so a translated cue split in
+   two exported the same sentence twice. Both halves are now marked untranslated; the next
+   translation run fills them. A whole-cue translation cannot be cut at the same proportion
+   as its source, because word order differs between languages.
+3. **`mergeCues` silently dropped** the second cue's translation. Now joined.
+4. **`shiftAll` collapsed cues** on a large backwards shift: clamping each cue at zero
+   independently stacked several at zero with overlapping ranges — an invalid subtitle file
+   — and destroyed relative timing the transcription got right. The shift is now reduced so
+   the earliest cue lands exactly at zero, preserving every gap.
+5. **E-AC-3 detection** checked for `"e-"` where Android's mime is `audio/eac3`.
+6. **Cue splitting could exceed the duration ceiling**, and a minimum-piece-size floor then
+   blocked the fix.
+
+### What is still not tested
+
+- **Nothing has run on real hardware.** MediaCodec behaviour across vendor decoders, the
+  `Transformer` burn-in path on specific encoders, and foreground-service behaviour under
+  Android 15's 6-hour cap are all unverified. The environment this was built in has no
+  device and no KVM, so an emulator is not available either.
+- **No live API call has been made.** `WhisperApiProvider` and `OpenAiTranslationProvider`
+  are tested against their own error mapping and parsing, not against the real endpoints.
+- Compose UI tests.

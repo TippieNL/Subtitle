@@ -10,7 +10,7 @@ documented rather than hidden — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ## Status
 
-MVP, end to end: pick a video → transcribe → edit → export. 50 unit tests passing.
+MVP, end to end: pick a video → transcribe → translate → edit → export. 102 tests passing.
 
 | Working | Not in this build |
 |---|---|
@@ -32,10 +32,15 @@ MVP, end to end: pick a video → transcribe → edit → export. 50 unit tests 
 Requires JDK 17+, Android SDK with platform 37 and build-tools 37.0.0.
 
 ```bash
-./gradlew :app:assembleDebug            # → app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest        # 68 unit tests
-./gradlew :app:connectedDebugAndroidTest  # Room migration test (needs a device)
+./gradlew :app:assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest  # full suite — no device needed
 ```
+
+Everything is tested on the JVM (Robolectric covers Room, the repository and the workers),
+including a three-hour and a twelve-hour chunking soak test and the v1→v2 database
+migration. There is no `androidTest` source set on purpose: a test nobody can run looks
+like coverage without being any. See [ARCHITECTURE §14](docs/ARCHITECTURE.md) for what is
+covered and what is still unverified.
 
 Install: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
 

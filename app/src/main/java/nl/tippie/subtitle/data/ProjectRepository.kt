@@ -101,41 +101,79 @@ class ProjectRepository(private val db: SubtitleDatabase) {
 
     suspend fun deleteCue(id: Long) = cueDao.delete(id)
 
-    /** Splits one cue in two at [atMs], dividing the text proportionally by character. */
+    /**
+     * Splits one cue in two at [atMs], dividing the text at the nearest word boundary.
+     *
+     * A cue too short in time or text to divide is left alone rather than forced — see
+     * [Cue.canSplit], which the editor uses to disable the action.
+     */
     suspend fun splitCue(cue: Cue, atMs: Long) {
-        val split = atMs.coerceIn(cue.startMs + 1, cue.endMs - 1)
+        val flat = cue.text.replace("\n", " ").trim()
+        // Needs at least MIN_SPLIT_MS of room on each side and two words to divide.
+        if (!cue.canSplit) return
+
+        val split = atMs.coerceIn(cue.startMs + Cue.MIN_SPLIT_MS, cue.endMs - Cue.MIN_SPLIT_MS)
         val fraction = (split - cue.startMs).toDouble() / (cue.endMs - cue.startMs)
-        val flat = cue.text.replace("\n", " ")
         val target = (flat.length * fraction).toInt().coerceIn(1, flat.length - 1)
-        var cut = flat.lastIndexOf(' ', target)
-        if (cut <= 0) cut = flat.indexOf(' ', target).takeIf { it > 0 } ?: target
+
+        // Nearest word boundary to the target, looking both ways.
+        val before = flat.lastIndexOf(' ', target)
+        val after = flat.indexOf(' ', target)
+        val cut = when {
+            before <= 0 && after <= 0 -> return
+            before <= 0 -> after
+            after <= 0 -> before
+            target - before <= after - target -> before
+            else -> after
+        }
+
         val head = flat.substring(0, cut).trim()
         val tail = flat.substring(cut).trim()
-        updateCue(cue.copy(endMs = split, text = head.ifBlank { flat }))
-        if (tail.isNotBlank()) {
-            insertCue(cue.copy(id = 0, startMs = split, text = tail))
-        }
+        if (head.isEmpty() || tail.isEmpty()) return
+
+        // The translation of the whole cue cannot be cut at the same proportion — word
+        // order differs between languages — so both halves are marked untranslated and
+        // the next translation run picks them up.
+        updateCue(cue.copy(endMs = split, text = head, translatedText = null))
+        insertCue(cue.copy(id = 0, startMs = split, text = tail, translatedText = null))
     }
 
-    /** Merges [second] into [first], keeping both texts on separate lines. */
+    /** Merges [second] into [first], joining both the original and translated text. */
     suspend fun mergeCues(first: Cue, second: Cue) {
+        val mergedTranslation = listOfNotNull(
+            first.translatedText?.replace("\n", " ")?.trim()?.ifBlank { null },
+            second.translatedText?.replace("\n", " ")?.trim()?.ifBlank { null },
+        ).joinToString(" ").ifBlank { null }
+
         updateCue(
             first.copy(
                 endMs = maxOf(first.endMs, second.endMs),
-                text = "${first.text.replace("\n", " ")} ${second.text.replace("\n", " ")}".trim()
+                text = "${first.text.replace("\n", " ")} ${second.text.replace("\n", " ")}".trim(),
+                translatedText = mergedTranslation,
             )
         )
         deleteCue(second.id)
     }
 
-    /** Shifts every cue by [deltaMs]; used for global sync correction. */
+    /**
+     * Shifts every cue by [deltaMs]; used for global sync correction.
+     *
+     * A backwards shift larger than the first cue's start time is reduced so the earliest
+     * cue lands exactly at zero. Clamping each cue independently would stack several of
+     * them at zero with overlapping ranges — an invalid subtitle file — and would silently
+     * destroy the relative timing the transcription got right.
+     */
     suspend fun shiftAll(projectId: Long, deltaMs: Long) {
         val cues = cueDao.forProject(projectId)
+        if (cues.isEmpty()) return
+        val earliestStart = cues.minOf { it.startMs }
+        val effectiveDelta = maxOf(deltaMs, -earliestStart)
+        if (effectiveDelta == 0L) return
         for (e in cues) {
             cueDao.update(
                 e.copy(
-                    startMs = (e.startMs + deltaMs).coerceAtLeast(0),
-                    endMs = (e.endMs + deltaMs).coerceAtLeast(1),
+                    startMs = e.startMs + effectiveDelta,
+                    endMs = e.endMs + effectiveDelta,
                 )
             )
         }
